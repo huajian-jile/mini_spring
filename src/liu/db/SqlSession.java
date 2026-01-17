@@ -41,12 +41,21 @@ public class SqlSession {
                     public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
                         // 1. 先处理 Object 的基础方法，防止死循环
                         if (method.getDeclaringClass() == Object.class) {
-                            // 如果是 toString, equals, hashCode 等方法，直接处理或返回默认值
-                            if ("toString".equals(method.getName())) {
+                            String methodName = method.getName();
+                            // 处理 toString
+                            if ("toString".equals(methodName)) {
                                 return "MapperProxy{" + mapperInterface.getSimpleName() + "}";
                             }
-                            // 其他 Object 方法（如 hashCode, equals）也可以在这里处理
-                            return null; // 或者根据需要返回默认值
+                            // 处理 hashCode
+                            if ("hashCode".equals(methodName)) {
+                                return System.identityHashCode(proxy);
+                            }
+                            // 处理 equals
+                            if ("equals".equals(methodName)) {
+                                return proxy == args[0];
+                            }
+                            // 其他 Object 方法返回默认值
+                            return null;
                         }
 
                         // ✅ 新增：特殊处理 toString 方法

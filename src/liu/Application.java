@@ -18,14 +18,7 @@ public class Application {
         MyApplicationContext context = MySpringApplication.run(Application.class);
         System.out.println("项目启动成功");
         IUserService userServiceImp =(IUserService) context.getBean("userServiceImp");
-        UserMapper userMapper = context.getBean("userMapper");
-        System.out.println("获取usermapper的注入："+userMapper.toString());
+        userServiceImp.getAllUsers();
 
-        List<Map<String, Object>> allUsers = userServiceImp.getAllUsers();
-        List<Map<String, Object>> all = userMapper.findAll();
-        System.out.println(allUsers);
-
-
-        System.out.println(all);
     }
 }

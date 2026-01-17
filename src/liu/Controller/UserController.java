@@ -14,9 +14,9 @@ import liu.service.UserServiceImp;
 import java.util.List;
 import java.util.Map;
 
+@Component
 @RestController // 或者 @Controller
 @RequestMapping("/user") // 类级别的路径
-@Component
 public class UserController {
 
     @Autowired

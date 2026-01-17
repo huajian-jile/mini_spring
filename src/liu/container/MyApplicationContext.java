@@ -49,7 +49,8 @@ public class MyApplicationContext {
     
     // 🆕 新增：保存代理对象对应的原始类型（用于依赖注入时查找）
     // Key: 代理对象, Value: 原始类型
-    private static Map<Object, Class<?>> proxyTargetTypeMap = new HashMap<>();
+    // 使用 IdentityHashMap 避免调用代理对象的 hashCode() 方法
+    private static Map<Object, Class<?>> proxyTargetTypeMap = new java.util.IdentityHashMap<>();
 
 
     // 修改：使用我们自己的 MyDataSource
@@ -519,15 +520,26 @@ public class MyApplicationContext {
     // 根据类型获取 Bean
     private Object getBeanByType(Class<?> type) {
         for (Object bean : beanFactory.values()) {
-            // 1. 直接类型匹配
-            if (type.isAssignableFrom(bean.getClass())) {
-                return bean;
+            // 跳过 null 对象
+            if (bean == null) {
+                continue;
             }
             
-            // 2. 如果是代理对象，检查原始类型
-            Class<?> originalType = proxyTargetTypeMap.get(bean);
-            if (originalType != null && type.isAssignableFrom(originalType)) {
-                return bean;
+            try {
+                // 1. 直接类型匹配
+                if (type.isAssignableFrom(bean.getClass())) {
+                    return bean;
+                }
+                
+                // 2. 如果是代理对象，检查原始类型
+                // 使用 try-catch 保护，避免某些代理对象的 hashCode/equals 有问题
+                Class<?> originalType = proxyTargetTypeMap.get(bean);
+                if (originalType != null && type.isAssignableFrom(originalType)) {
+                    return bean;
+                }
+            } catch (Exception e) {
+                // 忽略异常，继续查找下一个 Bean
+                System.err.println("⚠️  检查 Bean 类型时出错: " + e.getMessage());
             }
         }
         throw new RuntimeException("找不到 Bean: " + type.getName() + "，请检查是否添加了 @Component 或其衍生注解");
