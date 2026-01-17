@@ -1,6 +1,7 @@
 package liu.service;
 
 import liu.annotation.spring.ioc.Autowired;
+import liu.annotation.spring.ioc.Component;
 import liu.mapper.UserMapper;
 import liu.annotation.spring.aop.Log;
 import liu.annotation.spring.aop.ExecutionTime;
@@ -10,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 
 @Service
+@Component
 public class UserServiceImp implements IUserService {
 
 
@@ -21,8 +23,10 @@ public class UserServiceImp implements IUserService {
      * 从数据库获取所有用户（只记录执行时间）
      */
     @Override
+    @Log("日志打印：数据库开始查询")
     @ExecutionTime(value = "数据库查询用户", threshold = 50)
     public List<Map<String, Object>> getAllUsers() {
+        System.out.println("成功执行方法");
         return userMapper.findAll();
     }
     

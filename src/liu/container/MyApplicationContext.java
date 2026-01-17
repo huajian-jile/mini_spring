@@ -37,7 +37,7 @@ import java.util.concurrent.Executors;
 public class MyApplicationContext {
 
     // 存放 Bean 的工厂
-    private Map<String, Object> beanFactory = new HashMap<>();
+    private static Map<String, Object> beanFactory = new HashMap<>();
 
     // 🆕 新增：路由映射表
     private Map<String, Handler> handlerMapping = new HashMap<>();
@@ -49,7 +49,7 @@ public class MyApplicationContext {
     
     // 🆕 新增：保存代理对象对应的原始类型（用于依赖注入时查找）
     // Key: 代理对象, Value: 原始类型
-    private Map<Object, Class<?>> proxyTargetTypeMap = new HashMap<>();
+    private static Map<Object, Class<?>> proxyTargetTypeMap = new HashMap<>();
     
     // 🆕 新增：保存代理对象对应的原始对象（用于获取字段信息）
     // Key: 代理对象, Value: 原始对象
@@ -287,11 +287,11 @@ public class MyApplicationContext {
                 continue;
             }
             
-            // 跳过接口和抽象类
-            if (clazz.isInterface() || java.lang.reflect.Modifier.isAbstract(clazz.getModifiers())) {
-                // 接口会在 @Repository 处理时生成代理
-                continue;
-            }
+//            // 跳过接口和抽象类
+//            if (clazz.isInterface() || java.lang.reflect.Modifier.isAbstract(clazz.getModifiers())) {
+//                // 接口会在 @Repository 处理时生成代理
+//                continue;
+//            }
 
             // 2. 🗃️ 第二优先级：处理 @Repository (包含接口和普通类)
             if (clazz.isAnnotationPresent(Repository.class)) {
