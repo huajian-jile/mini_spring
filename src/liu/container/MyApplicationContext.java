@@ -50,10 +50,6 @@ public class MyApplicationContext {
     // 🆕 新增：保存代理对象对应的原始类型（用于依赖注入时查找）
     // Key: 代理对象, Value: 原始类型
     private static Map<Object, Class<?>> proxyTargetTypeMap = new HashMap<>();
-    
-    // 🆕 新增：保存代理对象对应的原始对象（用于获取字段信息）
-    // Key: 代理对象, Value: 原始对象
-    private Map<Object, Object> proxyTargetMap = new HashMap<>();
 
 
     // 修改：使用我们自己的 MyDataSource
@@ -79,7 +75,7 @@ public class MyApplicationContext {
         return context;
     }
     /**
-     * 刷新容器：扫描 -> 实例化 -> 注入
+     * 刷新容器：扫描 -> 实例化 -> 注入 -> AOP
      */
     public void refresh(Class<?> appClass) throws Exception {
         String packageName = appClass.getPackage().getName();
@@ -90,20 +86,20 @@ public class MyApplicationContext {
         // 1. 扫描
         List<Class<?>> classes = scanPackage(packageName);
 
-        // 2. 初始化 AOP (必须在实例化之前)
+        // 2. 初始化 AOP (必须在实例化之前，用于注册切面)
         initAop(classes);
 
         // 3. 实例化 (第一次循环)
         doInstance(classes);
 
-        // 4. 创建 AOP 代理（在实例化之后，依赖注入之前）
+        // 4. 🔥 关键：先依赖注入，再创建代理！
+        doAutowired();
+
+        // 5. 创建 AOP 代理（在依赖注入之后）
         createAopProxies();
 
-        // 5. 建立映射关系（新增)
+        // 6. 建立映射关系（新增)
         initHandlerMapping(classes);
-
-        // 6. 注入 (第二次循环)
-        doAutowired();
 
         startServer();
     }
@@ -336,7 +332,7 @@ public class MyApplicationContext {
     }
     /**
      * 🆕 创建 AOP 代理对象
-     * 在所有 Bean 实例化之后，依赖注入之前调用
+     * 在依赖注入之后调用，这样原始对象的依赖已经注入完成
      */
     private void createAopProxies() {
         Map<String, Object> proxiedBeans = new HashMap<>();
@@ -373,18 +369,19 @@ public class MyApplicationContext {
                 if (proxyInstance != instance) {
                     proxiedBeans.put(beanName, proxyInstance);
                     
-                    // 保存代理对象和原始类型的映射关系
+                    // 保存代理对象和原始类型的映射关系（用于类型匹配）
                     proxyTargetTypeMap.put(proxyInstance, originalType);
-                    // 保存代理对象和原始对象的映射关系（重要！）
-                    proxyTargetMap.put(proxyInstance, instance);
                     
                     System.out.println("🛡️  已生成 AOP 代理: " + beanName + " -> " + originalType.getSimpleName());
+                    System.out.println("    ├─ 原始对象: " + instance);
+                    System.out.println("    └─ 代理对象: " + proxyInstance);
                 }
             }
         }
         
         // 替换原始对象为代理对象
         beanFactory.putAll(proxiedBeans);
+        System.out.println("✅ AOP 代理创建完成，共 " + proxiedBeans.size() + " 个代理对象");
     }
     
     /**
@@ -461,20 +458,15 @@ public class MyApplicationContext {
     private void doAutowired() throws Exception {
         for (Map.Entry<String, Object> entry : beanFactory.entrySet()) {
             Object instance = entry.getValue();
-            
-            // 🆕 关键修复：如果是代理对象，获取原始对象来处理字段注入
-            Object targetInstance = proxyTargetMap.getOrDefault(instance, instance);
-            Class<?> clazz = targetInstance.getClass();
+            Class<?> clazz = instance.getClass();
 
             for (Field field : clazz.getDeclaredFields()) {
                 if (field.isAnnotationPresent(Autowired.class)) {
                     field.setAccessible(true);
                     Class<?> fieldType = field.getType();
                     try {
-                        // 这里会抛出上面的 RuntimeException
                         Object dependencyBean = getBeanByType(fieldType);
-                        // 注意：这里要设置到原始对象上，而不是代理对象
-                        field.set(targetInstance, dependencyBean);
+                        field.set(instance, dependencyBean);
                         System.out.println("💉 注入: " + dependencyBean.getClass().getName() + " 到 " + clazz.getSimpleName() + "." + field.getName());
                     } catch (Exception e) {
                         throw new Exception("注入失败！在类 [" + clazz.getName() + "] 的字段 [" + field.getName() + "] 上，类型为 [" + fieldType.getName() + "]", e);
