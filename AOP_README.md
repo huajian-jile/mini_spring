@@ -222,3 +222,50 @@ public class UserController {
 ----你的 main 方法能打印日志，是因为你直接调用了容器返回的代理对象。
 你的 Controller 不打印日志，是因为 DispatcherServlet（或你写的请求分发器）拿到的 UserController 实例是原始对象，不是代理对象。
 去检查 initHandlerMapping() 方法，确保你从容器里拿实例时，走的是 getBean() 流程！
+
+
+run方法--->刷新容器，进入容器断点执行---->扫描包，也就是启动类的路径---->初始化数据库---->扫描所有包---->注册切面---->
+注入依赖---->生成代理对象---->路径映射---->启动容器
+
+为什么控制器不走代理对象?：在main里面反而走代理对象，原因在于getBean(" userServiceImp ")是直接拿到代理对象的，
+
+
+            public Object getBean(String name) {
+            Object target = beanFactory.get(name); // 拿到原始对象
+            // 👇 检查是否有注解，如果有，返回代理
+            if (hasAspect(target)) {
+            return Proxy.newProxyInstance(..., new AopProxyHandler(target));
+            }
+            return target;
+            }
+
+
+而MyApplicationContext 里，初始化 Controller 的逻辑（initHandlerMapping）是这样的
+            // 🆕 新增：初始化处理器映射
+            private void initHandlerMapping(List<Class<?>> classes) {
+            
+            Object controller = getBeanByType(UserController.class);
+            
+            // 如果 getBeanByType `写得不好，它可能直接返回了 new 出来的实例，而不是 getBean 里的那个代理实例。`
+
+结果：handlerMapping 里存的是一个全新的、原始的 UserController 对象。这个对象没有经过 getBean() 的逻辑，
+所以没有被包装成代理。请求进来时，直接调用原始对象的方法。❌ AOP 失效。
+
+
+打印日志:
+         我在找: liu.Controller.UserController
+         我手里有个Bean，它的类型是: jdk.proxy2.$Proxy9
+         匹配结果: false
+         我在找: liu.Controller.UserController
+         我手里有个Bean，它的类型是: liu.Controller.UserController
+         匹配结果: true
+
+
+JDK代理无法通过类类型匹配
+
+
+
+我们真的会写代码吗？我们只是会用框架。
+ssm--->
+spring---->springmvc(springweb)---->mybatis
+不会造轮子和会，不想造是两回事。

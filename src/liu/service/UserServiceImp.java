@@ -26,7 +26,6 @@ public class UserServiceImp implements IUserService {
     @Log("日志打印：数据库开始查询")
     @ExecutionTime(value = "数据库查询用户", threshold = 50)
     public List<Map<String, Object>> getAllUsers() {
-        System.out.println("成功执行方法");
         return userMapper.findAll();
     }
     

@@ -1,5 +1,6 @@
 package liu;
 
+import liu.annotation.spring.ioc.Autowired;
 import liu.container.MyApplicationContext;
 import liu.annotation.spring.ioc.SpringBootApplication;
 import liu.mapper.UserMapper;
@@ -15,6 +16,7 @@ import java.util.Map;
 @SpringBootApplication
 public class Application {
     public static void main(String[] args) throws Exception {
+
         MyApplicationContext context = MySpringApplication.run(Application.class);
         System.out.println("项目启动成功");
         IUserService userServiceImp =(IUserService) context.getBean("userServiceImp");
