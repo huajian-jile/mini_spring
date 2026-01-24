@@ -9,6 +9,9 @@ import liu.annotation.spring.aop.Aspect;
 import liu.annotation.spring.aop.Log;
 import liu.annotation.spring.aop.ExecutionTime;
 import liu.annotation.spring.ioc.*;
+import liu.aspect.Advice;
+import liu.aspect.LogAdvice;
+import liu.aspect.PerformanceAdvice;
 import liu.db.MyDataSource;
 import liu.db.SqlSession;
 import liu.annotation.web.GetMapping;
@@ -21,6 +24,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.net.InetSocketAddress;
@@ -30,6 +34,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
+
+
 
 /**
  * 应用上下文，即 IoC 容器
@@ -165,62 +171,94 @@ public class MyApplicationContext {
             }
         }
     }
-//3.
+    //3.
     private void doInstance(List<Class<?>> classes) throws Exception {
         for (Class<?> clazz : classes) {
 
-            // 1. 🛡️ 第一优先级：如果是注解（Annotation），直接跳过
-            //    因为 @Controller, @Service 等注解上都有 @Component，
-            //    如果不跳过，下面的逻辑会试图去实例化这些注解接口，导致报错
+            // 1. 🛡️ 跳过注解接口
             if (clazz.isAnnotation()) {
                 System.out.println("⏭️  跳过注解: " + clazz.getName());
                 continue;
             }
 
-//            // 跳过接口和抽象类
-//            if (clazz.isInterface() || java.lang.reflect.Modifier.isAbstract(clazz.getModifiers())) {
-//                // 接口会在 @Repository 处理时生成代理
-//                continue;
-//            }
+            Object instance = null;
+            String beanName = null;
 
-            // 2. 🗃️ 第二优先级：处理 @Repository (包含接口和普通类)
+            // 2. 🗃️ 处理 @Mapper (持久层接口/类)
+            //    注意：这里优先处理注解，因为 @Mapper 可能标记在接口上
             if (clazz.isAnnotationPresent(Mapper.class)) {
 
-                // 如果是接口，生成 MyBatis 代理
+                // 如果是接口，生成 MyBatis 风格的代理
                 if (clazz.isInterface()) {
-                    Object mapperProxy = SqlSession.getMapper(clazz);
-                    String beanName = toLowerFirstCase(clazz.getSimpleName());
-                    beanFactory.put(beanName, mapperProxy);
-                    System.out.println("📊 注册 Mapper: " + beanName + " -> " + clazz.getSimpleName());
-
+                    instance = SqlSession.getMapper(clazz);
+                    beanName = toLowerFirstCase(clazz.getSimpleName());
+                    beanFactory.put(beanName, instance);
+                    System.out.println("📊 注册 Mapper 接口: " + beanName + " -> " + clazz.getSimpleName());
                 } else {
-                    // 如果是普通的 Repository 类，正常实例化
-                    try {
-                        Object instance = clazz.getDeclaredConstructor().newInstance();
-                        String beanName = toLowerFirstCase(clazz.getSimpleName());
-                        beanFactory.put(beanName, instance);
-                        System.out.println("📦 注册 Bean: " + beanName + " -> " + clazz.getSimpleName());
-                    } catch (Exception e) {
-                        System.err.println("❌ 无法实例化: " + clazz.getName() + " - " + e.getMessage());
-                    }
+                    // 如果是普通的 Mapper 类 (比如你写了具体的实现类)，正常实例化
+                    instance = clazz.getDeclaredConstructor().newInstance();
+                    beanName = toLowerFirstCase(clazz.getSimpleName());
+                    beanFactory.put(beanName, instance);
+                    System.out.println("📦 注册 Mapper 类: " + beanName + " -> " + clazz.getSimpleName());
                 }
-                continue; // 处理完跳过，防止重复处理
+                continue;
             }
 
-            // 3. 🏷️ 第三优先级：处理其他组件 (@Component, @Service, @Controller)
-            //    注意：这里 Repository 已经处理过了，所以不用担心 Repository 接口跑进来
+            // 3. 🏷️ 处理业务组件 (@Component, @Service, @Controller)
             if (clazz.isAnnotationPresent(Component.class) ||
                     clazz.isAnnotationPresent(Service.class) ||
                     clazz.isAnnotationPresent(Controller.class)) {
 
-                try {
-                    Object instance = clazz.getDeclaredConstructor().newInstance();
-                    String beanName = toLowerFirstCase(clazz.getSimpleName());
-                    beanFactory.put(beanName, instance);
-                    System.out.println("📦 注册 Bean: " + beanName + " -> " + clazz.getSimpleName());
-                } catch (Exception e) {
-                    System.err.println("❌ 无法实例化: " + clazz.getName() + " - " + e.getMessage());
+                // --- 第一步：实例化 ---
+                instance = clazz.getDeclaredConstructor().newInstance();
+                beanName = toLowerFirstCase(clazz.getSimpleName());
+
+                // --- 第二步：AOP 代理逻辑（关键修改点）---
+                // 检查这个实例是否需要被 AOP 增强
+                // 1. 检查类上有没有 @Log 或 @ExecutionTime
+                boolean needAop = clazz.isAnnotationPresent(Log.class) ||
+                        clazz.isAnnotationPresent(ExecutionTime.class);
+
+                // 2. 或者检查它的方法上有没有（这里简单起见只检查类级别，你可以扩展）
+                // 如果需要 AOP
+                if (needAop) {
+
+                    // 3.1 根据注解类型，决定使用哪个 Advice
+                    Advice advice = null;
+
+                    if (clazz.isAnnotationPresent(Log.class)) {
+                        advice = new LogAdvice();
+                    } else if (clazz.isAnnotationPresent(ExecutionTime.class)) {
+                        advice = new PerformanceAdvice();
+                    }
+                    // 这里可以加 else if 处理其他注解
+
+                    // 3.2 创建代理处理器 (传入目标对象 instance 和 增强逻辑 advice)
+                    // 注意：这里假设 instance 有接口，才能用 JDK 代理
+                    // 如果没有接口，需要使用 CGLIB (这里先用 JDK 代理示意)
+                    InvocationHandler handler = new AopProxyHandler(instance, advice);
+
+                    // 3.3 获取目标对象实现的所有接口
+                    Class<?>[] interfaces = instance.getClass().getInterfaces();
+
+                    // 3.4 只有实现了接口，才能生成 JDK 动态代理
+                    // 如果没有接口，这里需要降级为 CGLIB 或者直接使用原对象（或者抛异常）
+                    if (interfaces.length > 0) {
+                        instance = Proxy.newProxyInstance(
+                                instance.getClass().getClassLoader(),
+                                interfaces,
+                                handler
+                        );
+                        System.out.println("🎭 生成 AOP 代理: " + beanName + " -> " + clazz.getSimpleName());
+                    } else {
+                        // 如果没有接口，无法进行 JDK 代理，只能使用原对象（或者使用 CGLIB）
+                        System.out.println("⚠️  无法代理 (无接口): " + beanName + " -> " + clazz.getSimpleName() + " (缺少接口，跳过 AOP)");
+                    }
                 }
+                // --- 第三步：放入容器 ---
+                // 无论是否代理，instance 变量现在指向的是最终要放入容器的对象
+                beanFactory.put(beanName, instance);
+                System.out.println("📦 注册 Bean: " + beanName + " -> " + clazz.getSimpleName());
             }
         }
     }
@@ -423,13 +461,13 @@ public class MyApplicationContext {
     private Object createProxy(Object target, Method aspectMethod, Object aspectInstance) {
         // 检查是否实现了接口
         Class<?>[] interfaces = target.getClass().getInterfaces();
-        
+        Advice advice = new LogAdvice(); // 或者从容器里 getBean
         if (interfaces.length > 0) {
             // 有接口，使用 JDK 动态代理
             return Proxy.newProxyInstance(
                     target.getClass().getClassLoader(),
                     interfaces,
-                    new AopProxyHandler(target, aspectMethod, aspectInstance)
+                    new AopProxyHandler(target, advice) // 这里传入 target 和 advice
             );
         } else {
             // 没有接口，暂时不支持 CGLIB，返回原对象
