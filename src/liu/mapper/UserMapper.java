@@ -4,13 +4,13 @@ package liu.mapper;
 
 import liu.annotation.mybatis.Insert;
 import liu.annotation.mybatis.Select;
-import liu.annotation.spring.ioc.Repository;
+import liu.annotation.spring.ioc.Mapper;
 
 import java.util.List;
 import java.util.Map;
 
 // 注意：依然需要 @Repository，让 Spring 容器知道这是一个 Bean
-@Repository
+@Mapper
 public interface UserMapper {
 
     // 查询所有

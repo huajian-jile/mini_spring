@@ -8,127 +8,113 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 
 import java.sql.*;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 public class SqlSession {
 
-//    // 硬编码的数据库连接信息（你可以改成读配置文件）
-    private static final String DRIVER = "com.mysql.cj.jdbc.Driver";
-    private static final String URL = "jdbc:mysql://localhost:3306/big_event?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&autoReconnect=true";
-    private static final String USERNAME = "root";
-    private static final String PASSWORD = "root";
-//
+    // 1. 配置信息（实际项目建议读取 properties 文件）
+    private static String DRIVER = "com.mysql.cj.jdbc.Driver";
+    private static String URL = "jdbc:mysql://localhost:3306/big_event?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&autoReconnect=true";
+    private static String USERNAME = "root";
+    private static String PASSWORD = "root";
+
+    // 2. 静态代码块：注册驱动
     static {
         try {
             Class.forName(DRIVER);
         } catch (ClassNotFoundException e) {
-            throw new RuntimeException(e);
+            throw new ExceptionInInitializerError("数据库驱动加载失败: " + e.getMessage());
         }
     }
 
     /**
-     * 根据接口获取代理对象
+     * 核心方法：获取 Mapper 代理对象
      */
     public static <T> T getMapper(Class<T> mapperInterface) {
         return (T) Proxy.newProxyInstance(
                 mapperInterface.getClassLoader(),
                 new Class[]{mapperInterface},
-                new InvocationHandler() {
-                    @Override
-                    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-                        // 1. 先处理 Object 的基础方法，防止死循环
-                        if (method.getDeclaringClass() == Object.class) {
-                            String methodName = method.getName();
-                            // 处理 toString
-                            if ("toString".equals(methodName)) {
-                                return "MapperProxy{" + mapperInterface.getSimpleName() + "}";
-                            }
-                            // 处理 hashCode
-                            if ("hashCode".equals(methodName)) {
-                                return System.identityHashCode(proxy);
-                            }
-                            // 处理 equals
-                            if ("equals".equals(methodName)) {
-                                return proxy == args[0];
-                            }
-                            // 其他 Object 方法返回默认值
-                            return null;
-                        }
-
-                        // ✅ 新增：特殊处理 toString 方法
-                        if ("toString".equals(method.getName())) {
-                            return String.format("SqlSession.MapperProxy{interface=%s}", mapperInterface.getSimpleName());
-                        }
-
-
-                        String sql = null;
-
-                        // 解析方法上的注解
-                        if (method.isAnnotationPresent(Select.class)) {
-                            sql = method.getAnnotation(Select.class).value();
-                            return executeQuery(sql, args);
-                        } else if (method.isAnnotationPresent(Insert.class)) {
-                            sql = method.getAnnotation(Insert.class).value();
-                            return executeUpdate(sql, args);
-                        }
-
-                        throw new RuntimeException("不支持的方法：" + method.getName());
-                    }
-
-                    private Object executeQuery(String sql, Object[] args) {
-                        if (args == null) {
-                            args = new Object[]{new Object()}; // 如果是 null，初始化为空数组
-                        }
-                        try (Connection conn = DriverManager.getConnection(URL, USERNAME, PASSWORD)) {
-                            PreparedStatement stmt = conn.prepareStatement(sql);
-                            // 👇 关键修改：只有当 args 不为空且 sql 包含 ? 占位符时才设置参数
-                            if (args.length > 0 && sql.contains("?")) {
-                                for (int i = 0; i < args.length; i++) {
-                                    stmt.setObject(i + 1, args[i]); // 注意：这里是 i + 1，因为 JDBC 参数索引从 1 开始
-                                }
-                            }
-                            ResultSet rs = stmt.executeQuery();
-                            List<Map<String, Object>> list = new ArrayList<>();
-                            ResultSetMetaData metaData = rs.getMetaData();
-                            int columnCount = metaData.getColumnCount();
-
-                            while (rs.next()) {
-                                Map<String, Object> row = new HashMap<>();
-                                for (int i = 1; i <= columnCount; i++) {
-                                    row.put(metaData.getColumnName(i), rs.getObject(i));
-                                }
-                                list.add(row);
-                            }
-                            for (Map<String, Object> map : list) {
-                                // 遍历每个 Map 中的键值对
-                                for (String key : map.keySet()) {
-                                    Object value = map.get(key);
-                                    System.out.println("Key: " + key + ", Value: " + value);
-                                }
-                            }
-                            return list;
-                        } catch (Exception e) {
-                            e.printStackTrace();
-                            return null;
-                        }
-                    }
-
-                    private int executeUpdate(String sql, Object[] args) {
-                        try (Connection conn = DriverManager.getConnection(URL, USERNAME, PASSWORD)) {
-                            PreparedStatement stmt = conn.prepareStatement(sql);
-                            for (int i = 0; i < args.length; i++) {
-                                stmt.setObject(i + 1, args[i]);
-                            }
-                            return stmt.executeUpdate();
-                        } catch (Exception e) {
-                            e.printStackTrace();
-                            return -1;
-                        }
-                    }
-                }
+                new MapperProxy()
         );
+    }
+
+    // 3. 内部类：代理处理器
+    private static class MapperProxy implements InvocationHandler {
+
+        @Override
+        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+            // 处理 Object 的基础方法
+            if (method.getDeclaringClass() == Object.class) {
+                if ("toString".equals(method.getName())) {
+                    return "MapperProxy{" + method.getDeclaringClass().getSimpleName() + "}";
+                } else if ("hashCode".equals(method.getName())) {
+                    return System.identityHashCode(proxy);
+                } else if ("equals".equals(method.getName())) {
+                    return proxy == args[0];
+                }
+                return null;
+            }
+
+            // 处理自定义注解
+            if (method.isAnnotationPresent(Select.class)) {
+                Select select = method.getAnnotation(Select.class);
+                return executeQuery(select.value(), args);
+            } else if (method.isAnnotationPresent(Insert.class)) {
+                Insert insert = method.getAnnotation(Insert.class);
+                return executeUpdate(insert.value(), args);
+            }
+
+            throw new RuntimeException("不支持的注解或方法: " + method.getName());
+        }
+
+        // 查询逻辑
+        private Object executeQuery(String sql, Object[] args) {
+            try (Connection conn = DriverManager.getConnection(URL, USERNAME, PASSWORD);
+                 PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+                // 设置参数
+                setParameters(stmt, args);
+
+                try (ResultSet rs = stmt.executeQuery()) {
+                    List<Map<String, Object>> result = new ArrayList<>();
+                    ResultSetMetaData metaData = rs.getMetaData();
+                    int columnCount = metaData.getColumnCount();
+
+                    while (rs.next()) {
+                        Map<String, Object> row = new HashMap<>();
+                        for (int i = 1; i <= columnCount; i++) {
+                            row.put(metaData.getColumnName(i), rs.getObject(i));
+                        }
+                        result.add(row);
+                    }
+                    return result;
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                return Collections.emptyList();
+            }
+        }
+
+        // 更新逻辑
+        private int executeUpdate(String sql, Object[] args) {
+            try (Connection conn = DriverManager.getConnection(URL, USERNAME, PASSWORD);
+                 PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+                setParameters(stmt, args);
+                return stmt.executeUpdate();
+            } catch (Exception e) {
+                e.printStackTrace();
+                return -1;
+            }
+        }
+
+        // 参数设置辅助方法
+        private void setParameters(PreparedStatement stmt, Object[] args) throws SQLException {
+            if (args != null) {
+                for (int i = 0; i < args.length; i++) {
+                    stmt.setObject(i + 1, args[i]);
+                }
+            }
+        }
     }
 }

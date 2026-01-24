@@ -88,17 +88,17 @@ public class MyApplicationContext {
     }
     // 🆕 0.修改：使用极简数据源
     private void initDataSource() {
-        // 这里直接写死配置，为了演示。实际可以读取 application.properties
-        String driver = "com.mysql.cj.jdbc.Driver";
-        String url = "jdbc:mysql://localhost:3306/big_event?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&autoReconnect=true";
-        String username = "root";
-        String password = "root";
-
-        this.sqlSession = new SqlSession(); // 传入我们自己的数据源
-        this.myDataSource = new MyDataSource(driver, url, username, password);
-
-        // 放入容器，方便其他地方获取连接
-        beanFactory.put("sqlSession", sqlSession);
+//        // 这里直接写死配置，为了演示。实际可以读取 application.properties
+//        String driver = "com.mysql.cj.jdbc.Driver";
+//        String url = "jdbc:mysql://localhost:3306/big_event?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&autoReconnect=true";
+//        String username = "root";
+//        String password = "root";
+//
+//        this.sqlSession = new SqlSession(); // 传入我们自己的数据源
+//        this.myDataSource = new MyDataSource(driver, url, username, password);
+//
+//        // 放入容器，方便其他地方获取连接
+//        beanFactory.put("sqlSession", sqlSession);
         System.out.println("🔌 数据库连接初始化成功");
     }
     // --- 1. 扫描阶段 ---
@@ -137,8 +137,10 @@ public class MyApplicationContext {
             }
             
             // 1. 检查是不是切面类
+            // 如果有，说明这是一个“切面类”（比如 LogAspect.java）
             if (clazz.isAnnotationPresent(Aspect.class)) {
                 // 实例化切面类（使用 getDeclaredConstructor 替代废弃的 newInstance）
+                // 就像 new LogAspect() 一样，把切面对象创建出来
                 Object aspectInstance = null;
                 try {
                     aspectInstance = clazz.getDeclaredConstructor().newInstance();
@@ -182,7 +184,7 @@ public class MyApplicationContext {
 //            }
 
             // 2. 🗃️ 第二优先级：处理 @Repository (包含接口和普通类)
-            if (clazz.isAnnotationPresent(Repository.class)) {
+            if (clazz.isAnnotationPresent(Mapper.class)) {
 
                 // 如果是接口，生成 MyBatis 代理
                 if (clazz.isInterface()) {
@@ -477,7 +479,7 @@ public class MyApplicationContext {
         return clazz.isAnnotationPresent(Component.class) ||
                 clazz.isAnnotationPresent(Controller.class) ||
                 clazz.isAnnotationPresent(Service.class) ||
-                clazz.isAnnotationPresent(Repository.class);
+                clazz.isAnnotationPresent(Mapper.class);
 
 
     }
@@ -497,8 +499,8 @@ public class MyApplicationContext {
             String value = clazz.getAnnotation(Service.class).value();
             if (!value.isEmpty()) return value;
         }
-        if (clazz.isAnnotationPresent(Repository.class)) {
-            String value = clazz.getAnnotation(Repository.class).value();
+        if (clazz.isAnnotationPresent(Mapper.class)) {
+            String value = clazz.getAnnotation(Mapper.class).value();
             if (!value.isEmpty()) return value;
         }
         // 默认首字母小写
