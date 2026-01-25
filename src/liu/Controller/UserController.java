@@ -1,5 +1,6 @@
 package liu.Controller;
 
+import liu.Application;
 import liu.annotation.spring.aop.ExecutionTime;
 import liu.annotation.spring.aop.Log;
 import liu.annotation.spring.ioc.Autowired;
@@ -8,17 +9,20 @@ import liu.annotation.web.GetMapping;
 import liu.annotation.web.PostMapping;
 import liu.annotation.web.RequestMapping;
 import liu.annotation.web.RestController;
+import liu.container.MyApplicationContext;
 import liu.service.IUserService;
 import liu.service.UserServiceImp;
+import liu.util.MySpringApplication;
 
 import java.util.List;
 import java.util.Map;
+
+
 
 @Component
 @RestController // 或者 @Controller
 @RequestMapping("/user") // 类级别的路径
 public class UserController {
-
     @Autowired
     public IUserService userService;
 

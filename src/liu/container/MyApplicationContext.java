@@ -64,7 +64,7 @@ public class MyApplicationContext {
     private SqlSession sqlSession;
 
     /**
-     * 刷新容器：扫描 -> 实例化 -> 注入 -> AOP
+     * 刷新容器：扫描 -> 实例化 -> 注入 -> AOP -> 重新注入
      */
     public void refresh(Class<?> appClass) throws Exception {
         String packageName = appClass.getPackage().getName();
@@ -81,13 +81,18 @@ public class MyApplicationContext {
         // 3. 实例化 (第一次循环)
         doInstance(classes);
 
-        // 4. 🔥 关键：先依赖注入，再创建代理！
+        // 4. 🔥 第一次依赖注入（注入原始对象，让对象之间建立引用关系）
+        System.out.println("📌 第一次依赖注入（注入原始对象）");
         doAutowired();
 
         // 5. 创建 AOP 代理（在依赖注入之后）
         createAopProxies();
 
-        // 6. 建立映射关系（新增)
+        // 6. 🔥 第二次依赖注入（更新所有引用为代理对象）
+        System.out.println("📌 第二次依赖注入（更新为代理对象）");
+        doAutowired();
+
+        // 7. 建立映射关系（新增)
         initHandlerMapping(classes);
 
         startServer();
@@ -171,7 +176,7 @@ public class MyApplicationContext {
             }
         }
     }
-    //3.
+    //3.实例化
     private void doInstance(List<Class<?>> classes) throws Exception {
         for (Class<?> clazz : classes) {
 
@@ -274,8 +279,22 @@ public class MyApplicationContext {
                     Class<?> fieldType = field.getType();
                     try {
                         Object dependencyBean = getBeanByType(fieldType);
-                        field.set(instance, dependencyBean);
-                        System.out.println("💉 注入: " + dependencyBean.getClass().getName() + " 到 " + clazz.getSimpleName() + "." + field.getName());
+                        
+                        // 获取当前字段的旧值（用于判断是否更新）
+                        Object oldValue = field.get(instance);
+                        
+                        // 只有值不同时才更新（避免重复注入相同对象）
+                        if (oldValue != dependencyBean) {
+                            field.set(instance, dependencyBean);
+                            
+                            // 判断是否是代理对象
+                            boolean isProxy = dependencyBean.getClass().getName().contains("$Proxy");
+                            String beanType = isProxy ? "代理对象" : "原始对象";
+                            
+                            System.out.println("💉 注入 " + beanType + ": " + 
+                                dependencyBean.getClass().getName() + 
+                                " 到 " + clazz.getSimpleName() + "." + field.getName());
+                        }
                     } catch (Exception e) {
                         throw new Exception("注入失败！在类 [" + clazz.getName() + "] 的字段 [" + field.getName() + "] 上，类型为 [" + fieldType.getName() + "]", e);
                     }
@@ -391,11 +410,11 @@ public class MyApplicationContext {
 
     // 🆕 新增：启动 HTTP 服务器
     private void startServer() throws IOException {
-        HttpServer server = HttpServer.create(new InetSocketAddress(8088), 0);
+        HttpServer server = HttpServer.create(new InetSocketAddress(8099), 0);
         server.createContext("/", new DispatcherHandler());
         server.setExecutor(Executors.newCachedThreadPool());
         server.start();
-        System.out.println("💻 服务器启动成功，监听端口: 8080");
+        System.out.println("💻 服务器启动成功，监听端口: 8099");
     }
 
     // 🆕 新增：请求分发处理器
@@ -546,29 +565,26 @@ public class MyApplicationContext {
     }
 
     private Object getBeanByType(Class<?> type) {
-        // ⭐ 核心修复：遍历容器中的所有对象
         for (Object bean : beanFactory.values()) {
             if (bean == null) continue;
 
             try {
-                // 1️⃣ 第一层判断：如果是 JDK 动态代理（解决 jdk.proxy2 无法匹配的问题）
-                if (java.lang.reflect.Proxy.isProxyClass(bean.getClass())) {
-                    // 获取这个代理对象实现的所有接口
+                // 1. 如果是 JDK 动态代理
+                if (Proxy.isProxyClass(bean.getClass())) {
+                    // 获取代理实现的所有接口
                     Class<?>[] interfaces = bean.getClass().getInterfaces();
-
-                    // 检查这些接口中，是否包含我们正在寻找的类型（或者其父接口）
+                    // 检查我们要找的 type 是否在这些接口中
                     for (Class<?> intf : interfaces) {
-                        if (type.isAssignableFrom(intf)) {
-                            // ✅ 找到了！直接返回代理对象
+                        if (type.equals(intf)) {
+                            // 找到了！直接返回代理对象
                             return bean;
                         }
                     }
                 }
 
-                // 2️⃣ 第二层判断：如果是普通对象或 CGLIB 代理
-                // 这里使用 isInstance 直接判断 bean 是否属于 type 类型
+                // 2. 如果是普通对象 或 CGLIB 代理
+                // isInstance 会自动处理普通对象和 CGLIB 代理（子类 instanceof 父类 = true）
                 if (type.isInstance(bean)) {
-                    // ✅ 找到了！返回原始对象或 CGLIB 代理
                     return bean;
                 }
 
@@ -576,8 +592,6 @@ public class MyApplicationContext {
                 e.printStackTrace();
             }
         }
-
-        // ❌ 如果循环结束都没找到，抛出异常
         throw new RuntimeException("找不到 Bean: " + type.getName() + "，请检查是否添加了 @Component 或其衍生注解");
     }
 
