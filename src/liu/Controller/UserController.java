@@ -38,8 +38,10 @@ public class UserController {
 
     // POST http://localhost:8080/user/create
     @PostMapping("/create")
-    @Log("创建用户接口")
+    @Log(value = "查询用户列表接口", printArgs = false, printResult = true)
+    @ExecutionTime(value = "用户列表查询", threshold = 0)
     public String createUser() {
+        List<Map<String, Object>> allUsers = userService.getAllUsers();
         return "用户创建成功";
     }
 

@@ -269,3 +269,23 @@ JDK代理无法通过类类型匹配
 ssm--->
 spring---->springmvc(springweb)---->mybatis
 不会造轮子和会，不想造是两回事。
+
+
+
+1. 实例化
+   ├─ userService (原始)
+   └─ userController
+
+2. 第一次注入（原始对象）
+   └─ userController.userService = userService (原始) ✓
+
+3. 创建 AOP 代理
+   ├─ userServiceProxy = createProxy(userService)
+   └─ beanFactory["userService"] = userServiceProxy
+
+4. 第二次注入（代理对象）
+   └─ userController.userService = userServiceProxy ✓✓
+
+5. 结果
+   ├─ getBean("userService") → 代理对象 ✓
+   └─ controller.userService → 代理对象 ✓

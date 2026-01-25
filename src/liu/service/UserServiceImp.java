@@ -20,6 +20,7 @@ public class UserServiceImp implements IUserService {
 
 
     /**
+     * //    @Log("日志打印：数据库开始查询")
      * 从数据库获取所有用户（只记录执行时间）
      */
     @Override
@@ -28,12 +29,12 @@ public class UserServiceImp implements IUserService {
     public List<Map<String, Object>> getAllUsers() {
         return userMapper.findAll();
     }
-    
+
     /**
+     * //    @Log("执行慢速操作")
      * 模拟一个慢速操作（用于测试执行时间阈值）
      */
     @Override
-    @Log("执行慢速操作")
     @ExecutionTime(value = "慢速操作", threshold = 100)
     public String slowOperation() {
         try {

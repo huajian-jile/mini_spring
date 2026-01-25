@@ -9,9 +9,11 @@ import liu.annotation.spring.aop.Aspect;
 import liu.annotation.spring.aop.Log;
 import liu.annotation.spring.aop.ExecutionTime;
 import liu.annotation.spring.ioc.*;
-import liu.aspect.Advice;
-import liu.aspect.LogAdvice;
-import liu.aspect.PerformanceAdvice;
+import liu.annotation.spring.aop.Advice;
+import liu.annotation.spring.aop.Around;
+import liu.annotation.spring.aop.Aspect;
+import liu.annotation.spring.aop.ExecutionTime;
+import liu.annotation.spring.aop.Log;
 import liu.db.MyDataSource;
 import liu.db.SqlSession;
 import liu.annotation.web.GetMapping;
@@ -167,14 +169,17 @@ public class MyApplicationContext {
                 for (Method method : clazz.getDeclaredMethods()) {
                     if (method.isAnnotationPresent(Around.class)) {
                         Around around = method.getAnnotation(Around.class);
-                        // 简单的切入点表达式：这里我们传入的是类的全名，比如 "liu.service.UserService"
-                        String targetClassName = around.value();
-                        adviceMap.put(targetClassName, method);
-                        System.out.println("⚡️ AOP 绑定: 拦截 " + targetClassName + " -> 使用切面方法 " + method.getName());
+                        String expression = around.value();
+                        
+                        // 保存切点表达式和切面方法的映射
+                        adviceMap.put(expression, method);
+                        
+                        System.out.println("⚡️ AOP 配置: 表达式 [" + expression + "] -> 切面方法 " + method.getName());
                     }
                 }
             }
         }
+        System.out.println("✅ AOP 初始化完成，共注册 " + aspectMap.size() + " 个切面，" + adviceMap.size() + " 个通知");
     }
     //3.实例化
     private void doInstance(List<Class<?>> classes) throws Exception {
@@ -214,54 +219,12 @@ public class MyApplicationContext {
                     clazz.isAnnotationPresent(Service.class) ||
                     clazz.isAnnotationPresent(Controller.class)) {
 
-                // --- 第一步：实例化 ---
+                // --- 实例化 Bean ---
                 instance = clazz.getDeclaredConstructor().newInstance();
                 beanName = toLowerFirstCase(clazz.getSimpleName());
 
-                // --- 第二步：AOP 代理逻辑（关键修改点）---
-                // 检查这个实例是否需要被 AOP 增强
-                // 1. 检查类上有没有 @Log 或 @ExecutionTime
-                boolean needAop = clazz.isAnnotationPresent(Log.class) ||
-                        clazz.isAnnotationPresent(ExecutionTime.class);
-
-                // 2. 或者检查它的方法上有没有（这里简单起见只检查类级别，你可以扩展）
-                // 如果需要 AOP
-                if (needAop) {
-
-                    // 3.1 根据注解类型，决定使用哪个 Advice
-                    Advice advice = null;
-
-                    if (clazz.isAnnotationPresent(Log.class)) {
-                        advice = new LogAdvice();
-                    } else if (clazz.isAnnotationPresent(ExecutionTime.class)) {
-                        advice = new PerformanceAdvice();
-                    }
-                    // 这里可以加 else if 处理其他注解
-
-                    // 3.2 创建代理处理器 (传入目标对象 instance 和 增强逻辑 advice)
-                    // 注意：这里假设 instance 有接口，才能用 JDK 代理
-                    // 如果没有接口，需要使用 CGLIB (这里先用 JDK 代理示意)
-                    InvocationHandler handler = new AopProxyHandler(instance, advice);
-
-                    // 3.3 获取目标对象实现的所有接口
-                    Class<?>[] interfaces = instance.getClass().getInterfaces();
-
-                    // 3.4 只有实现了接口，才能生成 JDK 动态代理
-                    // 如果没有接口，这里需要降级为 CGLIB 或者直接使用原对象（或者抛异常）
-                    if (interfaces.length > 0) {
-                        instance = Proxy.newProxyInstance(
-                                instance.getClass().getClassLoader(),
-                                interfaces,
-                                handler
-                        );
-                        System.out.println("🎭 生成 AOP 代理: " + beanName + " -> " + clazz.getSimpleName());
-                    } else {
-                        // 如果没有接口，无法进行 JDK 代理，只能使用原对象（或者使用 CGLIB）
-                        System.out.println("⚠️  无法代理 (无接口): " + beanName + " -> " + clazz.getSimpleName() + " (缺少接口，跳过 AOP)");
-                    }
-                }
-                // --- 第三步：放入容器 ---
-                // 无论是否代理，instance 变量现在指向的是最终要放入容器的对象
+                // --- 放入容器 ---
+                // 注意：这里先放入原始对象，后续在 createAopProxies() 中统一创建代理
                 beanFactory.put(beanName, instance);
                 System.out.println("📦 注册 Bean: " + beanName + " -> " + clazz.getSimpleName());
             }
@@ -324,20 +287,31 @@ public class MyApplicationContext {
             if (needsProxy(instance)) {
                 Class<?> originalType = instance.getClass(); // 保存原始类型
 
-                // 查找对应的切面方法（如果有）
-                Method aspectMethod = adviceMap.get(originalType.getName());
-                Object aspectInstance = null;
-                if (aspectMethod != null) {
-                    // 获取切面实例
-                    for (Object obj : aspectMap.values()) {
-                        if (aspectMethod.getDeclaringClass().isAssignableFrom(obj.getClass())) {
-                            aspectInstance = obj;
-                            break;
+                // 查找匹配的切面方法和 Advice
+                Advice advice = null;
+                Method aspectMethod = null;
+                
+                for (Map.Entry<String, Method> adviceEntry : adviceMap.entrySet()) {
+                    String expression = adviceEntry.getKey();
+                    
+                    // 使用切点匹配器判断是否匹配
+                    if (PointcutMatcher.matches(expression, originalType)) {
+                        aspectMethod = adviceEntry.getValue();
+                        
+                        // 获取切面实例（切面实例就是 Advice）
+                        for (Object obj : aspectMap.values()) {
+                            if (aspectMethod.getDeclaringClass().isAssignableFrom(obj.getClass())) {
+                                if (obj instanceof liu.annotation.spring.aop.Advice) {
+                                    advice = (liu.annotation.spring.aop.Advice) obj;
+                                    break;
+                                }
+                            }
                         }
+                        break; // 找到第一个匹配的切面就使用
                     }
                 }
 
-                Object proxyInstance = createProxy(instance, aspectMethod, aspectInstance);
+                Object proxyInstance = createProxy(instance, advice);
 
                 // 只有成功创建代理才替换（如果没有接口，createProxy 返回原对象）
                 if (proxyInstance != instance) {
@@ -347,15 +321,17 @@ public class MyApplicationContext {
                     proxyTargetTypeMap.put(proxyInstance, originalType);
 
                     System.out.println("🛡️  已生成 AOP 代理: " + beanName + " -> " + originalType.getSimpleName());
-                    System.out.println("    ├─ 原始对象: " + instance);
-                    System.out.println("    └─ 代理对象: " + proxyInstance);
+                    if (advice != null) {
+                        System.out.println("    ├─ 切面类: " + advice.getClass().getSimpleName());
+                    }
+                    System.out.println("    ├─ 原始对象: " + instance.hashCode());
+                    System.out.println("    └─ 代理对象: " + proxyInstance.hashCode());
                 }
             }
         }
 
         // 替换原始对象为代理对象
         beanFactory.putAll(proxiedBeans);
-        System.out.println("    └─ 替换原始对象为代理对象: " + proxiedBeans);
         System.out.println("✅ AOP 代理创建完成，共 " + proxiedBeans.size() + " 个代理对象");
     }
 
@@ -457,14 +433,17 @@ public class MyApplicationContext {
      * 判断一个对象是否需要创建代理
      */
     private boolean needsProxy(Object instance) {
-        // 1. 检查类上是否有 @Aspect 注解的方法匹配
-        Method aspectMethod = adviceMap.get(instance.getClass().getName());
-        if (aspectMethod != null) {
-            return true;
+        Class<?> targetClass = instance.getClass();
+        
+        // 1. 检查是否匹配任何切点表达式
+        for (String expression : adviceMap.keySet()) {
+            if (PointcutMatcher.matches(expression, targetClass)) {
+                return true;
+            }
         }
         
         // 2. 检查类中的方法是否有 @Log 或 @ExecutionTime 注解
-        for (Method method : instance.getClass().getDeclaredMethods()) {
+        for (Method method : targetClass.getDeclaredMethods()) {
             if (method.isAnnotationPresent(Log.class) || 
                 method.isAnnotationPresent(ExecutionTime.class)) {
                 return true;
@@ -475,22 +454,21 @@ public class MyApplicationContext {
     }
     
     /**
-     * 🆕 创建代理对象（支持接口代理和 CGLIB 代理）
+     * 🆕 创建代理对象（支持接口代理）
      */
-    private Object createProxy(Object target, Method aspectMethod, Object aspectInstance) {
+    private Object createProxy(Object target, Advice advice) {
         // 检查是否实现了接口
         Class<?>[] interfaces = target.getClass().getInterfaces();
-        Advice advice = new LogAdvice(); // 或者从容器里 getBean
+        
         if (interfaces.length > 0) {
             // 有接口，使用 JDK 动态代理
             return Proxy.newProxyInstance(
                     target.getClass().getClassLoader(),
                     interfaces,
-                    new AopProxyHandler(target, advice) // 这里传入 target 和 advice
+                    new AopProxyHandler(target, advice)
             );
         } else {
             // 没有接口，暂时不支持 CGLIB，返回原对象
-            // 在实际 Spring 中会使用 CGLIB 进行代理
             System.out.println("⚠️  警告: " + target.getClass().getSimpleName() + 
                 " 没有实现接口，无法使用 JDK 动态代理，建议实现接口");
             return target;
