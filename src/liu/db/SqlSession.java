@@ -1,7 +1,7 @@
 package liu.db;
 
-import liu.annotation.mybatis.Insert;
-import liu.annotation.mybatis.Select;
+import liu.spring.annotation.mybatis.Insert;
+import liu.spring.annotation.mybatis.Select;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;

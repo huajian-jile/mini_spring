@@ -2,9 +2,9 @@ package liu.mapper;
 
 
 
-import liu.annotation.mybatis.Insert;
-import liu.annotation.mybatis.Select;
-import liu.annotation.spring.ioc.Mapper;
+import liu.spring.annotation.mybatis.Insert;
+import liu.spring.annotation.mybatis.Select;
+import liu.spring.annotation.spring.ioc.Mapper;
 
 import java.util.List;
 import java.util.Map;

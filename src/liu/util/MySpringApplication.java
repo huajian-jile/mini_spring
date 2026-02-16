@@ -1,7 +1,7 @@
 package liu.util;
 
-import liu.container.MyApplicationContext;
-import liu.annotation.spring.ioc.SpringBootApplication;
+import liu.spring.ioc.MyApplicationContext;
+import liu.spring.annotation.spring.ioc.SpringBootApplication;
 
 public class MySpringApplication {
 

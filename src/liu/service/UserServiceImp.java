@@ -1,11 +1,11 @@
 package liu.service;
 
-import liu.annotation.spring.ioc.Autowired;
-import liu.annotation.spring.ioc.Component;
+import liu.spring.annotation.spring.ioc.Autowired;
+import liu.spring.annotation.spring.ioc.Component;
 import liu.mapper.UserMapper;
-import liu.annotation.spring.aop.Log;
-import liu.annotation.spring.aop.ExecutionTime;
-import liu.annotation.spring.ioc.Service;
+import liu.spring.annotation.spring.aop.Log;
+import liu.spring.annotation.spring.aop.ExecutionTime;
+import liu.spring.annotation.spring.ioc.Service;
 
 import java.util.List;
 import java.util.Map;

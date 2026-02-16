@@ -1,18 +1,14 @@
 package liu.Controller;
 
-import liu.Application;
-import liu.annotation.spring.aop.ExecutionTime;
-import liu.annotation.spring.aop.Log;
-import liu.annotation.spring.ioc.Autowired;
-import liu.annotation.spring.ioc.Component;
-import liu.annotation.web.GetMapping;
-import liu.annotation.web.PostMapping;
-import liu.annotation.web.RequestMapping;
-import liu.annotation.web.RestController;
-import liu.container.MyApplicationContext;
+import liu.spring.annotation.spring.aop.ExecutionTime;
+import liu.spring.annotation.spring.aop.Log;
+import liu.spring.annotation.spring.ioc.Autowired;
+import liu.spring.annotation.spring.ioc.Component;
+import liu.spring.annotation.web.GetMapping;
+import liu.spring.annotation.web.PostMapping;
+import liu.spring.annotation.web.RequestMapping;
+import liu.spring.annotation.web.RestController;
 import liu.service.IUserService;
-import liu.service.UserServiceImp;
-import liu.util.MySpringApplication;
 
 import java.util.List;
 import java.util.Map;
