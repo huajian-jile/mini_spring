@@ -4,387 +4,246 @@ package liu.container;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
+import liu.annotation.spring.aop.After;
+import liu.annotation.spring.aop.AfterReturning;
+import liu.annotation.spring.aop.AfterThrowing;
 import liu.annotation.spring.aop.Around;
 import liu.annotation.spring.aop.Aspect;
-import liu.annotation.spring.aop.Log;
-import liu.annotation.spring.aop.ExecutionTime;
-import liu.annotation.spring.ioc.*;
-import liu.annotation.spring.aop.Advice;
-import liu.annotation.spring.aop.Around;
-import liu.annotation.spring.aop.Aspect;
-import liu.annotation.spring.aop.ExecutionTime;
-import liu.annotation.spring.aop.Log;
-import liu.db.MyDataSource;
-import liu.db.SqlSession;
+import liu.annotation.spring.aop.Before;
+import liu.annotation.spring.aop.Order;
 import liu.annotation.web.GetMapping;
 import liu.annotation.web.PostMapping;
 import liu.annotation.web.RequestMapping;
 import liu.annotation.web.RestController;
+import liu.annotation.spring.ioc.Controller;
+import liu.annotation.spring.ioc.Mapper;
+import liu.db.MyDataSource;
+import liu.db.SqlSession;
+import liu.container.aop.AdviceType;
+import liu.container.aop.PointcutAdvisorEntry;
 import liu.util.Handler;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
 import java.net.InetSocketAddress;
 import java.net.URL;
+import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Executors;
 
-
-
 /**
- * 应用上下文，即 IoC 容器
+ * 应用上下文（类似 Spring 的 ApplicationContext）。
+ * 职责：扫描、注册 Bean 定义、注册扩展（AOP/组件注解）、建立路由、启动服务器。
+ * Bean 的创建与生命周期由 BeanFactory 管理，扩展新功能通过 BeanPostProcessor 与 ComponentAnnotationRegistry。
  */
 public class MyApplicationContext {
 
-    // 存放 Bean 的工厂
-    private  Map<String, Object> beanFactory = new HashMap<>();
+    private final DefaultListableBeanFactory beanFactory;
+    private final ComponentAnnotationRegistry componentRegistry;
+    private final Map<String, Handler> handlerMapping = new HashMap<>();
+    private final Map<Class<?>, Object> aspectMap = new HashMap<>();
+    private final Map<String, Method> adviceMap = new HashMap<>();
+    private final List<PointcutAdvisorEntry> pointcutAdvisorList = new ArrayList<>();
 
-    // 🆕 新增：路由映射表
-    private Map<String, Handler> handlerMapping = new HashMap<>();
+    public MyApplicationContext() {
+        this.beanFactory = new DefaultListableBeanFactory();
+        this.componentRegistry = new ComponentAnnotationRegistry();
+    }
 
-    // 🆕 新增：存放切面的映射
-    private Map<Class<?>, Object> aspectMap = new HashMap<>();
-    // 🆕 新增：存放切入点表达式和切面方法的映射 (这里简化处理，Key是类名)
-    private Map<String, Method> adviceMap = new HashMap<>();
-    
-    // 🆕 新增：保存代理对象对应的原始类型（用于依赖注入时查找）
-    // Key: 代理对象, Value: 原始类型
-    // 使用 IdentityHashMap 避免调用代理对象的 hashCode() 方法
-    private  Map<Object, Class<?>> proxyTargetTypeMap = new java.util.IdentityHashMap<>();
+    /** 获取 BeanFactory，便于扩展（如注册新的 BeanPostProcessor、单例等） */
+    public DefaultListableBeanFactory getBeanFactory() {
+        return beanFactory;
+    }
 
-
-    // 修改：使用我们自己的 MyDataSource
-    private MyDataSource myDataSource;
-    private SqlSession sqlSession;
+    /** 获取组件注解注册表，便于扩展（如注册新的组件注解） */
+    public ComponentAnnotationRegistry getComponentRegistry() {
+        return componentRegistry;
+    }
 
     /**
-     * 刷新容器：扫描 -> 实例化 -> 注入 -> AOP -> 重新注入
+     * 刷新容器：扫描 -> 注册 Bean 定义 -> 初始化 AOP -> 注册后置处理器 -> 实例化 Bean -> 路由 -> 启动服务
      */
     public void refresh(Class<?> appClass) throws Exception {
         String packageName = appClass.getPackage().getName();
         System.out.println("🚀 开始扫描包: " + packageName);
-        //0.初始化数据库
-        initDataSource();
 
-        // 1. 扫描
+        initDataSource();
         List<Class<?>> classes = scanPackage(packageName);
 
-        // 2. 初始化 AOP (必须在实例化之前，用于注册切面)
         initAop(classes);
+        registerBeanDefinitions(classes);
+        registerProcessorsAndSingletons();
+        beanFactory.preInstantiateSingletons();
 
-        // 3. 实例化 (第一次循环)
-        doInstance(classes);
-
-        // 4. 🔥 第一次依赖注入（注入原始对象，让对象之间建立引用关系）
-        System.out.println("📌 第一次依赖注入（注入原始对象）");
-        doAutowired();
-
-        // 5. 创建 AOP 代理（在依赖注入之后）
-        createAopProxies();
-
-        // 6. 🔥 第二次依赖注入（更新所有引用为代理对象）
-        System.out.println("📌 第二次依赖注入（更新为代理对象）");
-        doAutowired();
-
-        // 7. 建立映射关系（新增)
-        initHandlerMapping(classes);
-
+        initHandlerMapping();
         startServer();
     }
-    // 🆕 0.修改：使用极简数据源
+
     private void initDataSource() {
-//        // 这里直接写死配置，为了演示。实际可以读取 application.properties
-//        String driver = "com.mysql.cj.jdbc.Driver";
-//        String url = "jdbc:mysql://localhost:3306/big_event?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&autoReconnect=true";
-//        String username = "root";
-//        String password = "root";
-//
-//        this.sqlSession = new SqlSession(); // 传入我们自己的数据源
-//        this.myDataSource = new MyDataSource(driver, url, username, password);
-//
-//        // 放入容器，方便其他地方获取连接
-//        beanFactory.put("sqlSession", sqlSession);
         System.out.println("🔌 数据库连接初始化成功");
     }
-    // --- 1. 扫描阶段 ---
+
     private List<Class<?>> scanPackage(String packageName) throws Exception {
         List<Class<?>> classList = new ArrayList<>();
         String packagePath = packageName.replace(".", "/");
         ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
         URL url = classLoader.getResource(packagePath);
-
         if (url != null) {
             File dir = new File(url.getFile());
-            for (File file : dir.listFiles()) {
-                if (file.isDirectory()) {
-                    classList.addAll(scanPackage(packageName + "." + file.getName()));
-                } else {
-                    String fileName = file.getName();
-                    if (fileName.endsWith(".class")) {
-                        String className = fileName.substring(0, fileName.length() - 6);
-                        String fullClassName = packageName + "." + className;
-                        Class<?> clazz = classLoader.loadClass(fullClassName);
-                        classList.add(clazz);
+            File[] files = dir.listFiles();
+            if (files != null) {
+                for (File file : files) {
+                    if (file.isDirectory()) {
+                        classList.addAll(scanPackage(packageName + "." + file.getName()));
+                    } else {
+                        String fileName = file.getName();
+                        if (fileName.endsWith(".class")) {
+                            String className = fileName.substring(0, fileName.length() - 6);
+                            String fullClassName = packageName + "." + className;
+                            Class<?> clazz = classLoader.loadClass(fullClassName);
+                            classList.add(clazz);
+                        }
                     }
                 }
             }
         }
         return classList;
     }
-    /**
-    2.注册aop
-     */
+
     private void initAop(List<Class<?>> classes) throws Exception {
         for (Class<?> clazz : classes) {
-            // 跳过注解类型本身
-            if (clazz.isAnnotation()) {
+            if (clazz.isAnnotation()) continue;
+            if (!clazz.isAnnotationPresent(Aspect.class)) continue;
+
+            Object aspectInstance;
+            try {
+                aspectInstance = clazz.getDeclaredConstructor().newInstance();
+            } catch (Exception e) {
+                System.err.println("❌ 无法实例化切面类: " + clazz.getName());
                 continue;
             }
-            
-            // 1. 检查是不是切面类
-            // 如果有，说明这是一个“切面类”（比如 LogAspect.java）
-            if (clazz.isAnnotationPresent(Aspect.class)) {
-                // 实例化切面类（使用 getDeclaredConstructor 替代废弃的 newInstance）
-                // 就像 new LogAspect() 一样，把切面对象创建出来
-                Object aspectInstance = null;
-                try {
-                    aspectInstance = clazz.getDeclaredConstructor().newInstance();
-                } catch (Exception e) {
-                    System.err.println("❌ 无法实例化切面类: " + clazz.getName() + " - " + e.getMessage());
-                    continue;
-                }
-                
-                aspectMap.put(clazz, aspectInstance);
-                System.out.println("🔧 注册切面: " + clazz.getSimpleName());
+            aspectMap.put(clazz, aspectInstance);
+            int order = clazz.isAnnotationPresent(Order.class) ? clazz.getAnnotation(Order.class).value() : Integer.MAX_VALUE;
+            System.out.println("🔧 注册切面: " + clazz.getSimpleName() + (order != Integer.MAX_VALUE ? " @Order(" + order + ")" : ""));
 
-                // 2. 解析切面类里的方法
-                for (Method method : clazz.getDeclaredMethods()) {
-                    if (method.isAnnotationPresent(Around.class)) {
-                        Around around = method.getAnnotation(Around.class);
-                        String expression = around.value();
-                        
-                        // 保存切点表达式和切面方法的映射
-                        adviceMap.put(expression, method);
-                        
-                        System.out.println("⚡️ AOP 配置: 表达式 [" + expression + "] -> 切面方法 " + method.getName());
-                    }
+            for (Method method : clazz.getDeclaredMethods()) {
+                if (method.isAnnotationPresent(Around.class)) {
+                    String expression = method.getAnnotation(Around.class).value();
+                    adviceMap.put(expression, method);
+                    pointcutAdvisorList.add(new PointcutAdvisorEntry(expression, method, AdviceType.AROUND, order));
+                    System.out.println("⚡️ AOP 配置: [" + expression + "] -> @" + "Around " + method.getName());
+                }
+                if (method.isAnnotationPresent(Before.class)) {
+                    String expression = method.getAnnotation(Before.class).value();
+                    pointcutAdvisorList.add(new PointcutAdvisorEntry(expression, method, AdviceType.BEFORE, order));
+                    System.out.println("⚡️ AOP 配置: [" + expression + "] -> @" + "Before " + method.getName());
+                }
+                if (method.isAnnotationPresent(After.class)) {
+                    String expression = method.getAnnotation(After.class).value();
+                    pointcutAdvisorList.add(new PointcutAdvisorEntry(expression, method, AdviceType.AFTER, order));
+                    System.out.println("⚡️ AOP 配置: [" + expression + "] -> @" + "After " + method.getName());
+                }
+                if (method.isAnnotationPresent(AfterReturning.class)) {
+                    String expression = method.getAnnotation(AfterReturning.class).value();
+                    pointcutAdvisorList.add(new PointcutAdvisorEntry(expression, method, AdviceType.AFTER_RETURNING, order));
+                    System.out.println("⚡️ AOP 配置: [" + expression + "] -> @" + "AfterReturning " + method.getName());
+                }
+                if (method.isAnnotationPresent(AfterThrowing.class)) {
+                    String expression = method.getAnnotation(AfterThrowing.class).value();
+                    pointcutAdvisorList.add(new PointcutAdvisorEntry(expression, method, AdviceType.AFTER_THROWING, order));
+                    System.out.println("⚡️ AOP 配置: [" + expression + "] -> @" + "AfterThrowing " + method.getName());
                 }
             }
         }
-        System.out.println("✅ AOP 初始化完成，共注册 " + aspectMap.size() + " 个切面，" + adviceMap.size() + " 个通知");
+        System.out.println("✅ AOP 初始化完成，共 " + aspectMap.size() + " 个切面，" + pointcutAdvisorList.size() + " 个通知");
     }
-    //3.实例化
-    private void doInstance(List<Class<?>> classes) throws Exception {
+
+    /** 只注册 Bean 定义，不创建实例；组件与 Mapper 通过可扩展的注册表识别 */
+    private void registerBeanDefinitions(List<Class<?>> classes) {
         for (Class<?> clazz : classes) {
+            if (clazz.isAnnotation()) continue;
 
-            // 1. 🛡️ 跳过注解接口
-            if (clazz.isAnnotation()) {
-                System.out.println("⏭️  跳过注解: " + clazz.getName());
-                continue;
-            }
+            String beanName;
+            BeanDefinition bd;
 
-            Object instance = null;
-            String beanName = null;
-
-            // 2. 🗃️ 处理 @Mapper (持久层接口/类)
-            //    注意：这里优先处理注解，因为 @Mapper 可能标记在接口上
             if (clazz.isAnnotationPresent(Mapper.class)) {
-
-                // 如果是接口，生成 MyBatis 风格的代理
-                if (clazz.isInterface()) {
-                    instance = SqlSession.getMapper(clazz);
-                    beanName = toLowerFirstCase(clazz.getSimpleName());
-                    beanFactory.put(beanName, instance);
-                    System.out.println("📊 注册 Mapper 接口: " + beanName + " -> " + clazz.getSimpleName());
-                } else {
-                    // 如果是普通的 Mapper 类 (比如你写了具体的实现类)，正常实例化
-                    instance = clazz.getDeclaredConstructor().newInstance();
-                    beanName = toLowerFirstCase(clazz.getSimpleName());
-                    beanFactory.put(beanName, instance);
-                    System.out.println("📦 注册 Mapper 类: " + beanName + " -> " + clazz.getSimpleName());
-                }
+                beanName = getBeanName(clazz, true);
+                bd = new BeanDefinition(beanName, clazz);
+                bd.setMapper(clazz.isInterface());
+                beanFactory.registerBeanDefinition(beanName, bd);
+                System.out.println("📊 注册 Mapper: " + beanName + " -> " + clazz.getSimpleName());
                 continue;
             }
 
-            // 3. 🏷️ 处理业务组件 (@Component, @Service, @Controller)
-            if (clazz.isAnnotationPresent(Component.class) ||
-                    clazz.isAnnotationPresent(Service.class) ||
-                    clazz.isAnnotationPresent(Controller.class)) {
-
-                // --- 实例化 Bean ---
-                instance = clazz.getDeclaredConstructor().newInstance();
-                beanName = toLowerFirstCase(clazz.getSimpleName());
-
-                // --- 放入容器 ---
-                // 注意：这里先放入原始对象，后续在 createAopProxies() 中统一创建代理
-                beanFactory.put(beanName, instance);
+            if (componentRegistry.isComponent(clazz)) {
+                if (clazz.isAnnotationPresent(Aspect.class)) {
+                    continue;
+                }
+                beanName = getBeanName(clazz, false);
+                bd = new BeanDefinition(beanName, clazz);
+                bd.setComponentAnnotation(componentRegistry.getComponentAnnotation(clazz));
+                beanFactory.registerBeanDefinition(beanName, bd);
                 System.out.println("📦 注册 Bean: " + beanName + " -> " + clazz.getSimpleName());
             }
         }
     }
-    // --- 4. 注入阶段 ---
-    private void doAutowired() throws Exception {
-        for (Map.Entry<String, Object> entry : beanFactory.entrySet()) {
-            Object instance = entry.getValue();
-            Class<?> clazz = instance.getClass();
 
-            for (Field field : clazz.getDeclaredFields()) {
-                if (field.isAnnotationPresent(Autowired.class)) {
-                    field.setAccessible(true);
-                    Class<?> fieldType = field.getType();
-                    try {
-                        Object dependencyBean = getBeanByType(fieldType);
-                        
-                        // 获取当前字段的旧值（用于判断是否更新）
-                        Object oldValue = field.get(instance);
-                        
-                        // 只有值不同时才更新（避免重复注入相同对象）
-                        if (oldValue != dependencyBean) {
-                            field.set(instance, dependencyBean);
-                            
-                            // 判断是否是代理对象
-                            boolean isProxy = dependencyBean.getClass().getName().contains("$Proxy");
-                            String beanType = isProxy ? "代理对象" : "原始对象";
-                            
-                            System.out.println("💉 注入 " + beanType + ": " + 
-                                dependencyBean.getClass().getName() + 
-                                " 到 " + clazz.getSimpleName() + "." + field.getName());
-                        }
-                    } catch (Exception e) {
-                        throw new Exception("注入失败！在类 [" + clazz.getName() + "] 的字段 [" + field.getName() + "] 上，类型为 [" + fieldType.getName() + "]", e);
-                    }
-                }
-            }
+    private String getBeanName(Class<?> clazz, boolean isMapper) {
+        if (isMapper && clazz.isAnnotationPresent(Mapper.class)) {
+            String v = clazz.getAnnotation(Mapper.class).value();
+            if (v != null && !v.isEmpty()) return v;
         }
+        String suggested = componentRegistry.getSuggestedBeanName(clazz);
+        if (suggested != null && !suggested.isEmpty()) return suggested;
+        return toLowerFirstCase(clazz.getSimpleName());
     }
 
-    /**
-     * 5.
-     * 🆕 创建 AOP 代理对象
-     * 在依赖注入之后调用，这样原始对象的依赖已经注入完成
-     */
-    private void createAopProxies() {
-        Map<String, Object> proxiedBeans = new HashMap<>();
+    private void registerProcessorsAndSingletons() {
+        beanFactory.addBeanPostProcessor(AopBeanPostProcessor.of(aspectMap, adviceMap, pointcutAdvisorList));
+        SqlSession sqlSession = new SqlSession();
+        beanFactory.setSqlSession(sqlSession);
+        beanFactory.registerSingleton("sqlSession", sqlSession);
+    }
 
-        for (Map.Entry<String, Object> entry : beanFactory.entrySet()) {
-            String beanName = entry.getKey();
-            Object instance = entry.getValue();
-
-            // 跳过切面类本身
-            if (instance.getClass().isAnnotationPresent(Aspect.class)) {
+    private void initHandlerMapping() {
+        Set<String> names = beanFactory.getBeanDefinitionNames();
+        for (String name : names) {
+            BeanDefinition bd = beanFactory.getBeanDefinition(name);
+            if (bd == null || bd.isAspect() || bd.isMapper()) continue;
+            Class<?> clazz = bd.getBeanClass();
+            if (!clazz.isAnnotationPresent(RestController.class) && !clazz.isAnnotationPresent(Controller.class)) {
                 continue;
             }
-
-            // 检查是否需要创建代理
-            if (needsProxy(instance)) {
-                Class<?> originalType = instance.getClass(); // 保存原始类型
-
-                // 查找匹配的切面方法和 Advice
-                Advice advice = null;
-                Method aspectMethod = null;
-                
-                for (Map.Entry<String, Method> adviceEntry : adviceMap.entrySet()) {
-                    String expression = adviceEntry.getKey();
-                    
-                    // 使用切点匹配器判断是否匹配
-                    if (PointcutMatcher.matches(expression, originalType)) {
-                        aspectMethod = adviceEntry.getValue();
-                        
-                        // 获取切面实例（切面实例就是 Advice）
-                        for (Object obj : aspectMap.values()) {
-                            if (aspectMethod.getDeclaringClass().isAssignableFrom(obj.getClass())) {
-                                if (obj instanceof liu.annotation.spring.aop.Advice) {
-                                    advice = (liu.annotation.spring.aop.Advice) obj;
-                                    break;
-                                }
-                            }
-                        }
-                        break; // 找到第一个匹配的切面就使用
-                    }
+            Object controller = beanFactory.getBean(name);
+            String classLevelPath = "";
+            if (clazz.isAnnotationPresent(RequestMapping.class)) {
+                classLevelPath = clazz.getAnnotation(RequestMapping.class).value();
+            }
+            for (Method method : clazz.getDeclaredMethods()) {
+                String methodPath = "";
+                if (method.isAnnotationPresent(RequestMapping.class)) {
+                    methodPath = method.getAnnotation(RequestMapping.class).value();
                 }
-
-                Object proxyInstance = createProxy(instance, advice);
-
-                // 只有成功创建代理才替换（如果没有接口，createProxy 返回原对象）
-                if (proxyInstance != instance) {
-                    proxiedBeans.put(beanName, proxyInstance);
-
-                    // 保存代理对象和原始类型的映射关系（用于类型匹配）
-                    proxyTargetTypeMap.put(proxyInstance, originalType);
-
-                    System.out.println("🛡️  已生成 AOP 代理: " + beanName + " -> " + originalType.getSimpleName());
-                    if (advice != null) {
-                        System.out.println("    ├─ 切面类: " + advice.getClass().getSimpleName());
-                    }
-                    System.out.println("    ├─ 原始对象: " + instance.hashCode());
-                    System.out.println("    └─ 代理对象: " + proxyInstance.hashCode());
+                if (method.isAnnotationPresent(PostMapping.class)) {
+                    methodPath = method.getAnnotation(PostMapping.class).value();
+                }
+                if (method.isAnnotationPresent(GetMapping.class)) {
+                    methodPath = method.getAnnotation(GetMapping.class).value();
+                }
+                if (!methodPath.isEmpty()) {
+                    String url = ("/" + classLevelPath + "/" + methodPath).replaceAll("/+", "/");
+                    handlerMapping.put(url, new Handler(controller, method, url));
+                    System.out.println("🗺️  映射: " + url + " -> " + method.getName());
                 }
             }
         }
-
-        // 替换原始对象为代理对象
-        beanFactory.putAll(proxiedBeans);
-        System.out.println("✅ AOP 代理创建完成，共 " + proxiedBeans.size() + " 个代理对象");
     }
 
-
-
-
-
-
-    // 🆕 6.新增：初始化处理器映射
-    private void initHandlerMapping(List<Class<?>> classes) {
-        try {
-            for (Class<?> clazz : classes) {
-                if (clazz.isAnnotationPresent(RestController.class) ||
-                        clazz.isAnnotationPresent(Controller.class)) {
-
-                    Object controller = getBeanByType(clazz);
-
-                    // 获取类级别的 RequestMapping (如果有)
-                    String classLevelPath = "";
-                    if (clazz.isAnnotationPresent(RequestMapping.class)) {
-                        classLevelPath = clazz.getAnnotation(RequestMapping.class).value();
-                    }
-
-                    // 遍历所有方法
-                    for (Method method : clazz.getDeclaredMethods()) {
-                        // 检查方法上是否有 Mapping 注解
-                        String methodPath = "";
-                        if (method.isAnnotationPresent(RequestMapping.class)) {
-                            methodPath = method.getAnnotation(RequestMapping.class).value();
-                        }
-                        if (method.isAnnotationPresent(PostMapping.class)) {
-                            methodPath = method.getAnnotation(PostMapping.class).value();
-                        }
-                        if (method.isAnnotationPresent(GetMapping.class)) {
-                            methodPath = method.getAnnotation(GetMapping.class).value();
-                        }
-
-                        if (!methodPath.isEmpty()) {
-                            // 组合类路径和方法路径
-                            String url = ("/" + classLevelPath + "/" + methodPath)
-                                    .replaceAll("/+", "/");
-                            handlerMapping.put(url, new Handler(controller, method, url));
-                            System.out.println("🗺️  映射: " + url + " -> " + method.getName());
-                        }
-                    }
-                }
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
-    // 🆕 新增：启动 HTTP 服务器
     private void startServer() throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(8099), 0);
         server.createContext("/", new DispatcherHandler());
@@ -393,26 +252,20 @@ public class MyApplicationContext {
         System.out.println("💻 服务器启动成功，监听端口: 8099");
     }
 
-    // 🆕 新增：请求分发处理器
-    class DispatcherHandler implements HttpHandler {
+    private class DispatcherHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             String path = exchange.getRequestURI().getPath();
             Handler handler = handlerMapping.get(path);
-
             try {
                 if (handler != null) {
-                    // 调用对应的方法
                     Object result = handler.method.invoke(handler.controller);
                     String response = result != null ? result.toString() : "Success";
-
-                    // 写回响应
                     exchange.sendResponseHeaders(200, response.getBytes().length);
                     OutputStream os = exchange.getResponseBody();
                     os.write(response.getBytes());
                     os.close();
                 } else {
-                    // 404
                     exchange.sendResponseHeaders(404, -1);
                 }
             } catch (Exception e) {
@@ -424,168 +277,21 @@ public class MyApplicationContext {
         }
     }
 
-
-
-
-
-    
-    /**
-     * 判断一个对象是否需要创建代理
-     */
-    private boolean needsProxy(Object instance) {
-        Class<?> targetClass = instance.getClass();
-        
-        // 1. 检查是否匹配任何切点表达式
-        for (String expression : adviceMap.keySet()) {
-            if (PointcutMatcher.matches(expression, targetClass)) {
-                return true;
-            }
-        }
-        
-        // 2. 检查类中的方法是否有 @Log 或 @ExecutionTime 注解
-        for (Method method : targetClass.getDeclaredMethods()) {
-            if (method.isAnnotationPresent(Log.class) || 
-                method.isAnnotationPresent(ExecutionTime.class)) {
-                return true;
-            }
-        }
-        
-        return false;
-    }
-    
-    /**
-     * 🆕 创建代理对象（支持接口代理）
-     */
-    private Object createProxy(Object target, Advice advice) {
-        // 检查是否实现了接口
-        Class<?>[] interfaces = target.getClass().getInterfaces();
-        
-        if (interfaces.length > 0) {
-            // 有接口，使用 JDK 动态代理
-            return Proxy.newProxyInstance(
-                    target.getClass().getClassLoader(),
-                    interfaces,
-                    new AopProxyHandler(target, advice)
-            );
-        } else {
-            // 没有接口，暂时不支持 CGLIB，返回原对象
-            System.out.println("⚠️  警告: " + target.getClass().getSimpleName() + 
-                " 没有实现接口，无法使用 JDK 动态代理，建议实现接口");
-            return target;
-        }
-    }
-    
-    /**
-     * 🆕 执行切面逻辑（用于 @Around 注解）
-     */
-    private Object invokeAdvice(Object target, Method method, Object[] args, Method aspectMethod) throws Throwable {
-        // 1. 获取切面实例
-        Object aspectInstance = null;
-        for (Object obj : aspectMap.values()) {
-            if (aspectMethod.getDeclaringClass().isAssignableFrom(obj.getClass())) {
-                aspectInstance = obj;
-                break;
-            }
-        }
-
-        // 2. 执行环绕通知（在这里写你的日志和耗时代码）
-        long startTime = System.currentTimeMillis();
-        System.out.println("📝 日志开始: 正在执行 " + method.getName() + " 方法...");
-
-        // 3. 执行目标方法
-        Object result = method.invoke(target, args);
-
-        // 4. 执行结束
-        long duration = System.currentTimeMillis() - startTime;
-        System.out.println("📝 日志结束: 方法执行耗时 " + duration + "ms");
-
-        return result;
-    }
-
-    // --- 工具方法 ---
-
-    // 判断类是否为组件
-    private boolean isComponent(Class<?> clazz) {
-        // 如果这是一个注解接口，则跳过，不要实例化它。
-        if (clazz.isAnnotation()) {
-            return false;
-        }
-
-        return clazz.isAnnotationPresent(Component.class) ||
-                clazz.isAnnotationPresent(Controller.class) ||
-                clazz.isAnnotationPresent(Service.class) ||
-                clazz.isAnnotationPresent(Mapper.class);
-
-
-    }
-
-    // 获取 Bean 名称
-    private String getBeanName(Class<?> clazz) {
-        // 优先使用注解里的名字
-        if (clazz.isAnnotationPresent(Component.class)) {
-            String value = clazz.getAnnotation(Component.class).value();
-            if (!value.isEmpty()) return value;
-        }
-        if (clazz.isAnnotationPresent(Controller.class)) {
-            String value = clazz.getAnnotation(Controller.class).value();
-            if (!value.isEmpty()) return value;
-        }
-        if (clazz.isAnnotationPresent(Service.class)) {
-            String value = clazz.getAnnotation(Service.class).value();
-            if (!value.isEmpty()) return value;
-        }
-        if (clazz.isAnnotationPresent(Mapper.class)) {
-            String value = clazz.getAnnotation(Mapper.class).value();
-            if (!value.isEmpty()) return value;
-        }
-        // 默认首字母小写
-        return toLowerFirstCase(clazz.getSimpleName());
-    }
-
-    private Object getBeanByType(Class<?> type) {
-        for (Object bean : beanFactory.values()) {
-            if (bean == null) continue;
-
-            try {
-                // 1. 如果是 JDK 动态代理
-                if (Proxy.isProxyClass(bean.getClass())) {
-                    // 获取代理实现的所有接口
-                    Class<?>[] interfaces = bean.getClass().getInterfaces();
-                    // 检查我们要找的 type 是否在这些接口中
-                    for (Class<?> intf : interfaces) {
-                        if (type.equals(intf)) {
-                            // 找到了！直接返回代理对象
-                            return bean;
-                        }
-                    }
-                }
-
-                // 2. 如果是普通对象 或 CGLIB 代理
-                // isInstance 会自动处理普通对象和 CGLIB 代理（子类 instanceof 父类 = true）
-                if (type.isInstance(bean)) {
-                    return bean;
-                }
-
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
-        throw new RuntimeException("找不到 Bean: " + type.getName() + "，请检查是否添加了 @Component 或其衍生注解");
-    }
-
-    // 首字母小写
-    private String toLowerFirstCase(String simpleName) {
+    private static String toLowerFirstCase(String simpleName) {
+        if (simpleName == null || simpleName.isEmpty()) return simpleName;
         char[] chars = simpleName.toCharArray();
         chars[0] = Character.toLowerCase(chars[0]);
         return String.valueOf(chars);
     }
 
-    // 对外获取 Bean
+    // ---------- 对外 API（兼容原有用法） ----------
+
+    @SuppressWarnings("unchecked")
     public <T> T getBean(String name) {
-        return (T) beanFactory.get(name);
+        return (T) beanFactory.getBean(name);
     }
 
-    public <T> T getBean(Class<T> clazz) {
-        return (T) getBeanByType(clazz);
+    public <T> T getBean(Class<T> requiredType) {
+        return beanFactory.getBean(requiredType);
     }
 }

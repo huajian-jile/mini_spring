@@ -14,7 +14,7 @@ public class SqlSession {
 
     // 1. 配置信息（实际项目建议读取 properties 文件）
     private static String DRIVER = "com.mysql.cj.jdbc.Driver";
-    private static String URL = "jdbc:mysql://localhost:3306/big_event?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&autoReconnect=true";
+    private static String URL = "jdbc:mysql://localhost:3306/mini_spring?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&autoReconnect=true";
     private static String USERNAME = "root";
     private static String PASSWORD = "root";
 

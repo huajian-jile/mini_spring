@@ -1,4 +1,4 @@
-package liu.container;
+package liu.aspect.logaspect;
 
 import java.util.regex.Pattern;
 
@@ -66,6 +66,31 @@ public class PointcutMatcher {
         
         return false;
     }
+
+    /**
+     * 判断类+方法是否匹配切点表达式（方法级匹配，与 Spring 一致）。
+     * 当 method 为 null 时仅做类级匹配（与 matches(expression, targetClass) 一致）。
+     */
+    public static boolean matches(String expression, Class<?> targetClass, java.lang.reflect.Method method) {
+        if (expression == null || expression.isEmpty()) return false;
+        if (targetClass == null) return false;
+
+        // 1. 注解表达式：@Log、@ExecutionTime 等，需方法级判断
+        if (expression.startsWith("@")) {
+            return method != null && matchesAnnotation(expression, method);
+        }
+
+        // 2. execution：可带方法名匹配
+        if (expression.startsWith("execution(")) {
+            boolean classMatch = matchesExecution(expression, targetClass.getName());
+            if (!classMatch) return false;
+            if (method == null) return true;
+            return matchesExecutionMethod(expression, method.getName());
+        }
+
+        // 3. 其余为类级表达式
+        return matches(expression, targetClass);
+    }
     
     /**
      * 判断方法是否匹配注解表达式
@@ -97,23 +122,39 @@ public class PointcutMatcher {
      * 格式：execution(* liu.service.*.*(..))
      */
     private static boolean matchesExecution(String expression, String className) {
-        // 移除 execution( 和 )
         String content = expression.substring(10, expression.length() - 1).trim();
-        
-        // 简化处理：提取包路径部分
-        // execution(* liu.service.*.*(..)) -> liu.service.*
         String[] parts = content.split("\\s+");
         if (parts.length >= 2) {
             String methodPattern = parts[1];
             int lastDot = methodPattern.lastIndexOf('.');
             if (lastDot > 0) {
                 String classPattern = methodPattern.substring(0, lastDot);
-                // 递归调用 matches，传入 className 字符串比较
                 return matchesClassPattern(classPattern, className);
             }
         }
-        
         return false;
+    }
+
+    /**
+     * 从 execution 表达式中提取方法名模式并匹配目标方法名
+     * 例如 execution(* liu.service.*.save*(..)) 中的 save*
+     */
+    private static boolean matchesExecutionMethod(String expression, String methodName) {
+        String content = expression.substring(10, expression.length() - 1).trim();
+        String[] parts = content.split("\\s+");
+        if (parts.length >= 2) {
+            String full = parts[1];
+            int lastDot = full.lastIndexOf('.');
+            if (lastDot >= 0 && lastDot < full.length() - 1) {
+                String methodPattern = full.substring(lastDot + 1);
+                // 去掉 (..) 或 (.*) 等
+                int paren = methodPattern.indexOf('(');
+                if (paren > 0) methodPattern = methodPattern.substring(0, paren);
+                String regex = methodPattern.replace(".", "\\.").replace("*", ".*");
+                return Pattern.matches(regex, methodName);
+            }
+        }
+        return true;
     }
     
     /**

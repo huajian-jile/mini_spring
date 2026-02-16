@@ -14,7 +14,7 @@ import java.util.Map;
 public interface UserMapper {
 
     // 查询所有
-    @Select("SELECT * FROM textmybatis")
+    @Select("SELECT * FROM users")
     List<Map<String, Object>> findAll();
 
     // 根据 ID 查询
