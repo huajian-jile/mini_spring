@@ -1,6 +1,7 @@
 package liu.spring.container;
 
 import liu.spring.container.aop.AopAdvisorRegistry;
+import liu.spring.container.aop.AopContext;
 import liu.spring.container.aop.MethodInterceptor;
 import liu.spring.container.aop.ReflectiveMethodInvocation;
 
@@ -28,6 +29,15 @@ public class AopProxyHandler implements InvocationHandler {
 
     @Override
     public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+        try {
+            AopContext.setCurrentProxy(proxy);
+            return doInvoke(proxy, method, args);
+        } finally {
+            AopContext.clearCurrentProxy();
+        }
+    }
+
+    private Object doInvoke(Object proxy, Method method, Object[] args) throws Throwable {
         Class<?> declaringClass = method.getDeclaringClass();
         if (declaringClass == Object.class) {
             switch (method.getName()) {

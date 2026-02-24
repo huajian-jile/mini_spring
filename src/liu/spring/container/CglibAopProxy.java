@@ -1,6 +1,7 @@
 package liu.spring.container;
 
 import liu.spring.container.aop.AopAdvisorRegistry;
+import liu.spring.container.aop.AopContext;
 import liu.spring.container.aop.MethodInterceptor;
 import liu.spring.container.aop.ReflectiveMethodInvocation;
 
@@ -25,6 +26,15 @@ public class CglibAopProxy implements net.sf.cglib.proxy.MethodInterceptor {
 
     @Override
     public Object intercept(Object proxy, Method method, Object[] args, net.sf.cglib.proxy.MethodProxy methodProxy) throws Throwable {
+        try {
+            AopContext.setCurrentProxy(proxy);
+            return doIntercept(proxy, method, args);
+        } finally {
+            AopContext.clearCurrentProxy();
+        }
+    }
+
+    private Object doIntercept(Object proxy, Method method, Object[] args) throws Throwable {
         if (method.getDeclaringClass() == Object.class) {
             return method.invoke(target, args);
         }

@@ -1,6 +1,7 @@
 package liu.spring.container;
 
 import liu.spring.ioc.BeanPostProcessor;
+import liu.spring.ioc.Ordered;
 import liu.spring.container.aop.AopAdvisorRegistry;
 import liu.spring.container.aop.PointcutAdvisorEntry;
 
@@ -9,9 +10,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * AOP 的 Bean 后置处理器（IOC 扩展点，实现 liu.spring.ioc.BeanPostProcessor）。
+ * AOP 的 Bean 后置处理器（IOC 扩展点）。实现 Ordered，默认顺序为 LOWEST_PRECEDENCE，保证在其它 BPP 之后执行。
  */
-public class AopBeanPostProcessor implements BeanPostProcessor {
+public class AopBeanPostProcessor implements BeanPostProcessor, Ordered {
+
+    @Override
+    public int getOrder() {
+        return Ordered.LOWEST_PRECEDENCE;
+    }
 
     private final AopAdvisorRegistry advisorRegistry;
 
