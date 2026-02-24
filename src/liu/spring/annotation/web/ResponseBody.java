@@ -6,12 +6,10 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * 请求映射（URL + 可选 HTTP 方法），与 Spring 的 @RequestMapping 一致。
+ * 方法返回值直接写回响应体（如 JSON），与 Spring 的 @ResponseBody 一致。
+ * @RestController 标注的类中所有方法默认视为 @ResponseBody。
  */
 @Target({ElementType.METHOD, ElementType.TYPE})
 @Retention(RetentionPolicy.RUNTIME)
-public @interface RequestMapping {
-    String value() default "";
-    /** HTTP 方法：GET, POST, PUT, DELETE 等，空表示不限制 */
-    String[] method() default {};
+public @interface ResponseBody {
 }

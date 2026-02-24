@@ -1,6 +1,5 @@
 package liu.spring.ioc;
 
-import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import liu.spring.annotation.spring.aop.After;
@@ -19,12 +18,13 @@ import liu.spring.annotation.spring.ioc.Mapper;
 import liu.spring.container.AopBeanPostProcessor;
 import liu.spring.container.aop.AdviceType;
 import liu.spring.container.aop.PointcutAdvisorEntry;
+import liu.spring.webmvc.DispatcherServlet;
+import liu.spring.webmvc.RequestMappingHandlerAdapter;
+import liu.spring.webmvc.RequestMappingHandlerMapping;
 import liu.db.SqlSession;
-import liu.util.Handler;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
 import java.net.URL;
@@ -42,7 +42,7 @@ public class MyApplicationContext {
 
     private final DefaultListableBeanFactory beanFactory;
     private final ComponentAnnotationRegistry componentRegistry;
-    private final Map<String, Handler> handlerMapping = new HashMap<>();
+    private HttpHandler dispatcherHandler;
     private final Map<Class<?>, Object> aspectMap = new HashMap<>();
     private final Map<String, Method> adviceMap = new HashMap<>();
     private final List<PointcutAdvisorEntry> pointcutAdvisorList = new ArrayList<>();
@@ -187,6 +187,7 @@ public class MyApplicationContext {
     }
 
     private void initHandlerMapping() {
+        RequestMappingHandlerMapping handlerMapping = new RequestMappingHandlerMapping();
         Set<String> names = beanFactory.getBeanDefinitionNames();
         for (String name : names) {
             BeanDefinition bd = beanFactory.getBeanDefinition(name);
@@ -194,52 +195,28 @@ public class MyApplicationContext {
             Class<?> clazz = bd.getBeanClass();
             if (!clazz.isAnnotationPresent(RestController.class) && !clazz.isAnnotationPresent(Controller.class)) continue;
             Object controller = beanFactory.getBean(name);
-            String classLevelPath = clazz.isAnnotationPresent(RequestMapping.class) ? clazz.getAnnotation(RequestMapping.class).value() : "";
-            for (Method method : clazz.getDeclaredMethods()) {
-                String methodPath = "";
-                if (method.isAnnotationPresent(RequestMapping.class)) methodPath = method.getAnnotation(RequestMapping.class).value();
-                if (method.isAnnotationPresent(PostMapping.class)) methodPath = method.getAnnotation(PostMapping.class).value();
-                if (method.isAnnotationPresent(GetMapping.class)) methodPath = method.getAnnotation(GetMapping.class).value();
-                if (!methodPath.isEmpty()) {
-                    String url = ("/" + classLevelPath + "/" + methodPath).replaceAll("/+", "/");
-                    handlerMapping.put(url, new Handler(controller, method, url));
-                    System.out.println("🗺️  映射: " + url + " -> " + method.getName());
-                }
-            }
+            handlerMapping.registerHandler(controller, clazz);
         }
+        for (Map.Entry<String, List<liu.spring.webmvc.HandlerMethod>> e : handlerMapping.getExactLookup().entrySet()) {
+            for (liu.spring.webmvc.HandlerMethod hm : e.getValue())
+                System.out.println("🗺️  映射: " + e.getKey() + " " + java.util.Arrays.toString(hm.getHttpMethods()));
+        }
+        for (liu.spring.webmvc.HandlerMethod hm : handlerMapping.getPatternHandlers()) {
+            System.out.println("🗺️  映射: " + hm.getPattern() + " (pattern)");
+        }
+        ArrayList<liu.spring.webmvc.HandlerMapping> mappings = new ArrayList<>();
+        mappings.add(handlerMapping);
+        ArrayList<liu.spring.webmvc.HandlerAdapter> adapters = new ArrayList<>();
+        adapters.add(new RequestMappingHandlerAdapter());
+        this.dispatcherHandler = new DispatcherServlet(mappings, adapters);
     }
 
     private void startServer() throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(8099), 0);
-        server.createContext("/", new DispatcherHandler());
+        server.createContext("/", dispatcherHandler);
         server.setExecutor(Executors.newCachedThreadPool());
         server.start();
         System.out.println("💻 服务器启动成功，监听端口: 8099");
-    }
-
-    private class DispatcherHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            String path = exchange.getRequestURI().getPath();
-            Handler handler = handlerMapping.get(path);
-            try {
-                if (handler != null) {
-                    Object result = handler.method.invoke(handler.controller);
-                    String response = result != null ? result.toString() : "Success";
-                    exchange.sendResponseHeaders(200, response.getBytes().length);
-                    OutputStream os = exchange.getResponseBody();
-                    os.write(response.getBytes());
-                    os.close();
-                } else {
-                    exchange.sendResponseHeaders(404, -1);
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-                exchange.sendResponseHeaders(500, -1);
-            } finally {
-                exchange.close();
-            }
-        }
     }
 
     private static String toLowerFirstCase(String simpleName) {
